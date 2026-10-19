@@ -19,7 +19,9 @@ torch_backend_device = backend.get_torch_backend_device_fn()
 
 
 def get_tuned_config(op_name):
-    return config_loader.get_tuned_config(op_name)
+    from .metax_launch_policy import adjust
+
+    return adjust(op_name, config_loader.get_tuned_config(op_name))
 
 
 def get_heuristic_config(op_name):
