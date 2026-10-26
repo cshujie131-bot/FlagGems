@@ -144,3 +144,48 @@ def test_linear_1d_with_bias(dtype, in_features, out_features):
     res_out = flag_gems.linear(input_tensor, weight, bias)
 
     utils.gems_assert_close(res_out, ref_out, dtype, reduce_dim=in_features)
+
+
+@pytest.mark.linear
+@pytest.mark.skipif(flag_gems.vendor_name != "metax", reason="MetaX short FP32 profile")
+@pytest.mark.parametrize("rows", [1024, 1025])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_metax_short_profile_scope(monkeypatch, rows, dtype, requires_grad):
+    import importlib
+
+    module = importlib.import_module(flag_gems.linear.__module__)
+    seen = []
+
+    def probe(entry, label):
+        class Record:
+            def __getitem__(self, grid):
+                def call(*args, **kwargs):
+                    args[3].fill_(float("nan"))
+                    seen.append(label)
+                    return entry[grid](*args, **kwargs)
+
+                return call
+
+        return Record()
+
+    for attr in ("linear_kernel", "_linear_fp32_short"):
+        monkeypatch.setattr(module, attr, probe(getattr(module, attr), attr))
+    x = torch.randn(
+        rows, 1024, device=flag_gems.device, dtype=dtype, requires_grad=requires_grad
+    )
+    weight = torch.randn(
+        1024, 1024, device=flag_gems.device, dtype=dtype, requires_grad=requires_grad
+    )
+    with torch.enable_grad():
+        actual = flag_gems.linear(x, weight)
+    reference = torch.nn.functional.linear(
+        x.detach().cpu().double(), weight.detach().cpu().double()
+    )
+    utils.gems_assert_close(actual, reference, dtype, reduce_dim=1024)
+    selected = (
+        "_linear_fp32_short"
+        if dtype == torch.float32 and rows <= 1024 and not requires_grad
+        else "linear_kernel"
+    )
+    assert seen == [selected]

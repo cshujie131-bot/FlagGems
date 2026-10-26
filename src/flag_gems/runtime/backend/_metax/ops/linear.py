@@ -140,6 +140,33 @@ def linear_kernel(
     tl.store(output_ptrs, output, mask=output_mask)
 
 
+def _make_fp32_short_profile():
+    import copy
+
+    from ..linear_config import FP32_SHORT_FEATURES, FP32_SHORT_MAX_ROWS
+
+    kernel = linear_kernel
+    while not isinstance(kernel, triton.runtime.JITFunction):
+        kernel = kernel.fn
+    # Separate configuration objects: AABS/tuning must not mutate the default
+    # entry's candidates through a shared Config instance.
+    configs = copy.deepcopy(runtime.get_tuned_config("linear"))
+    configs += copy.deepcopy(runtime.get_tuned_config("linear_fp32_short_extra"))
+    tuner = libtuner(
+        configs=configs,
+        key=["M", "N", "K"],
+        strategy=["align32", "align32", "align32"],
+        warmup=5,
+        rep=10,
+    )(kernel)
+    return libentry()(tuner), FP32_SHORT_MAX_ROWS, FP32_SHORT_FEATURES
+
+
+_linear_fp32_short, FP32_SHORT_MAX_ROWS, FP32_SHORT_FEATURES = (
+    _make_fp32_short_profile()
+)
+
+
 def linear(input, weight, bias=None):
     """
     Applies a linear transformation to the incoming data: y = xA^T + b
@@ -185,8 +212,20 @@ def linear(input, weight, bias=None):
         triton.cdiv(N, META["BLOCK_SIZE_N"]),
     )
 
+    grad_requested = torch.is_grad_enabled() and (
+        input.requires_grad
+        or weight.requires_grad
+        or (bias is not None and bias.requires_grad)
+    )
+    use_short_profile = (
+        input.dtype == weight.dtype == torch.float32
+        and 0 < M <= FP32_SHORT_MAX_ROWS
+        and (N, K) in FP32_SHORT_FEATURES
+        and not grad_requested
+    )
+    kernel = _linear_fp32_short if use_short_profile else linear_kernel
     with torch_device_fn.device(input.device), _disable_aabs_for_small_dims(M, N, K):
-        linear_kernel[grid](
+        kernel[grid](
             input_flat,
             weight,
             bias if bias is not None else weight,  # Pass dummy ptr if no bias

@@ -1967,3 +1967,18 @@ linear:
     BLOCK_SIZE_K: 32
   num_stages: 4
   num_warps: 4
+
+# Additional candidates for the validated short FP32 projection path.
+linear_fp32_short_extra:
+- META:
+    BLOCK_SIZE_M: 32
+    BLOCK_SIZE_N: 64
+    BLOCK_SIZE_K: 32
+  num_stages: 4
+  num_warps: 8
+- META:
+    BLOCK_SIZE_M: 64
+    BLOCK_SIZE_N: 64
+    BLOCK_SIZE_K: 32
+  num_stages: 4
+  num_warps: 8
