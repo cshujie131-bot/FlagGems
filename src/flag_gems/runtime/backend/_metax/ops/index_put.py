@@ -115,10 +115,12 @@ def generate_index_put_kernel(
             code.writeline(f"cur_idx = cur_idx // input_shape{i}")
         code.newline()
         code.writeline("mask0 = offset0 < M")
+        # Paged/strided storage can exceed int32 even when index tensors do not.
+        # Widen before stride multiplication; widening the product is too late.
         for i in range(indices_len):
             comp = [f"indices_idx{j} * indices{i}_stride{j}" for j in range(index_rank)]
             code.writeline(
-                f"cur_index{i} = tl.load(indices{i}_ptr + {' + '.join(comp)}, mask=mask0, other=0)"
+                f"cur_index{i} = tl.load(indices{i}_ptr + {' + '.join(comp)}, mask=mask0, other=0).to(tl.int64)"
             )
         code.newline()
         index_mask = [
@@ -368,10 +370,64 @@ def index_put(inp, indices, values, accumulate=False):
     return out
 
 
+def _masked_scalar_assignment(inp, indices, values, accumulate):
+    """Avoid dynamic nonzero and scalar D2H for leading bool-mask assignment."""
+    if (
+        accumulate
+        or inp.device.type != "cuda"
+        or len(indices) != 1
+        or not isinstance(indices[0], torch.Tensor)
+        or indices[0].dtype != torch.bool
+        or not 1 <= indices[0].ndim <= inp.ndim
+        or tuple(indices[0].shape) != tuple(inp.shape[: indices[0].ndim])
+        or indices[0].device != inp.device
+        or values.numel() != 1
+        or values.dtype != inp.dtype
+        or not inp.is_contiguous()
+        or inp.dtype
+        not in (
+            torch.float16,
+            torch.bfloat16,
+            torch.float32,
+            torch.float64,
+            torch.int32,
+            torch.int64,
+            torch.bool,
+        )
+    ):
+        return False
+    # Preserve the fallback's overlap behavior for unusual scalar views.
+    if (
+        values.untyped_storage().data_ptr() == inp.untyped_storage().data_ptr()
+        or indices[0].untyped_storage().data_ptr() == inp.untyped_storage().data_ptr()
+    ):
+        return False
+    if inp.numel() == 0:
+        return True
+    from flag_gems.ops.where import where_inner
+
+    mask = indices[0].reshape(*indices[0].shape, *((1,) * (inp.ndim - indices[0].ndim)))
+    if values.device.type == "cpu":
+        # A CPU scalar is a launch argument, not a tensor to upload. Uploading
+        # four bytes can serialize behind all preceding work on the stream.
+        if inp.dtype == torch.float64:
+            return False  # Python floats do not preserve a Triton FP64 argument.
+        from flag_gems.ops.masked_fill import masked_fill_kernel
+
+        masked_fill_kernel(inp, mask, values.item(), out0=inp)
+    elif values.device == inp.device:
+        where_inner(mask, values.reshape(()), inp, out0=inp)
+    else:
+        return False
+    return True
+
+
 def index_put_(inp, indices, values, accumulate=False):
     logger.debug("GEMS_METAX INDEX_PUT_")
 
     indices = list(indices)
+    if _masked_scalar_assignment(inp, indices, values, accumulate):
+        return inp
     if len(indices) == 1 and indices[0].dtype == torch.bool:
         mask = indices[0]
 

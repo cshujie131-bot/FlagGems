@@ -55,6 +55,7 @@ from .repeat_interleave import repeat_interleave_self_tensor
 from .resolve_conj import resolve_conj
 from .rsqrt import rsqrt, rsqrt_
 from .sigmoid import sigmoid
+from .sort import sort, sort_stable
 from .special_bessel_j0 import special_bessel_j0, special_bessel_j0_out
 from .special_chebyshev_polynomial_u import special_chebyshev_polynomial_u
 from .special_chebyshev_polynomial_w import (
@@ -152,6 +153,8 @@ __all__ = [
     "rsqrt",
     "rsqrt_",
     "sigmoid",
+    "sort",
+    "sort_stable",
     "special_bessel_j0",
     "special_bessel_j0_out",
     "special_chebyshev_polynomial_u",

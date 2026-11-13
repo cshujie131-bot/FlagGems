@@ -99,3 +99,12 @@ If you find our work useful, please consider citing our project:
 ## License
 
 The FlagGems project is licensed under the [Apache License (Version 2.0)](https://github.com/flagos-ai/FlagGems/blob/master/LICENSE).
+
+### Fixed MetaX Qwen3.8 composition
+
+This release branch retains the validated MetaX index/index_put address widening,
+masked-scalar assignment, index_select host-iteration fix and sort path used by
+[vllm-plugin-FL #635](https://github.com/flagos-ai/vllm-plugin-FL/pull/635).
+Use that model's fixed dependency lock and matching MetaX runtime. Operator
+interfaces and existing fallbacks are unchanged; this branch is not a floating
+replacement for the upstream release.
